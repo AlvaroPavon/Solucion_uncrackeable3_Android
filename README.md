@@ -1,7 +1,7 @@
 # Guia Paso a Paso: Resolucion del Reto UnCrackable Level 3
 
-**Alumno:** [Tu Nombre]
-**Materia:** Seguridad en Aplicaciones Moviles
+**Alumno:** Alvaro Pavon Martinez
+**Materia:** Puesta en produccion segura
 **Objetivo:** Obtener el codigo secreto oculto en "UnCrackable Level 3" mediante ingenieria inversa y hacking dinamico.
 
 ---

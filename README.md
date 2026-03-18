@@ -112,55 +112,211 @@ Al ejecutarlo, el script nos devuelve:
 
 ---
 
-## Anexo: Script de Bypass Final (Frida)
-Este es el archivo [bypass.js](bypass.js) completo que permite que la app funcione y nos permite realizar las pruebas.
+## Anexo: Análisis Detallado del Script de Bypass Final (Frida)
+
+Este archivo, [bypass.js](bypass.js), es el corazón de la solución. Utiliza técnicas de instrumentación dinámica tanto en la capa Java como en la capa Nativa (C/C++) para anular las protecciones del reto.
+
+### 1. Bypass de Detección en Capa Nativa (`strstr`)
+```javascript
+function hookStrstr() { ... }
+```
+La aplicación utiliza la función `strstr` de la librería estándar de C para buscar cadenas como "frida", "xposed" o "su" en los mapas de memoria y archivos del sistema. Nuestro hook intercepta estas llamadas:
+- **onEnter**: Lee los argumentos (pajar y aguja). Si detecta una búsqueda de herramientas de hacking, activa una bandera interna.
+- **onLeave**: Si la bandera está activa, reemplaza el valor de retorno por `0` (NULL), haciendo creer a la aplicación que no ha encontrado rastro de Frida o Root.
+
+### 2. Bloqueo de Hilos Anti-Tampering (`pthread_create`)
+```javascript
+function hookPthreadCreate() { ... }
+```
+Esta es la protección más agresiva de UnCrackable 3. La librería `libfoo.so` lanza hilos en segundo plano que monitorizan constantemente la integridad del proceso. Si detectan cambios, cierran la app.
+- **Estrategia**: Interceptamos la creación de cualquier hilo. Si el código que va a ejecutar el hilo pertenece a `libfoo.so`, el hook devuelve `0` (éxito) inmediatamente **sin ejecutar el hilo real**. Esto "congela" la seguridad de la librería nativa.
+
+### 3. Captura de Comparaciones (`strncmp`)
+```javascript
+function hookStrncmp() { ... }
+```
+Monitoriza las llamadas a `strncmp` provenientes exclusivamente de `libfoo.so`. Esto nos permite ver en tiempo real qué cadenas está comparando la aplicación, lo cual es vital para identificar dónde se procesa la clave secreta (aunque en este nivel la clave final se autogenera, es útil para depuración).
+
+### 4. Bypass de Seguridad en Capa Java
+```javascript
+Java.perform(function () { ... });
+```
+Dentro de este bloque gestionamos las protecciones estándar de Android:
+- **`Debug.isDebuggerConnected`**: Siempre devuelve `false` para evadir la detección de depuradores JDWP.
+- **`System.exit`**: Se bloquea para que, aunque una detección secundaria tenga éxito, la aplicación no pueda cerrarse sola.
+- **`MainActivity.showDialog`**: Evita que aparezcan los pop-ups de "Root Detected" que bloquean la interacción del usuario.
+- **`CodeCheck.check_code`**: Forzamos a que siempre devuelva `true`, permitiendo que cualquier entrada sea aceptada por la interfaz.
+
+### 5. Extracción Automática del Secreto (`extractSecret`)
+```javascript
+function extractSecret() { ... }
+```
+Este algoritmo realiza un volcado dinámico de la memoria de `libfoo.so` y busca el secreto mediante fuerza bruta sobre el cifrado XOR:
+1.  **Enumeración**: Localiza todos los rangos de memoria (lectura/escritura) de la librería.
+2.  **Escaneo XOR**: Recorre la memoria byte a byte aplicando la operación XOR con la clave `"pizzapizzapizzapizzapizz"`.
+3.  **Validación**: Si el resultado es una cadena de 24 caracteres ASCII imprimibles y coherentes, la identifica automáticamente como la **Secret Flag**.
+
+---
+
+### Código Completo del Script de Bypass (`bypass.js`)
 
 ```javascript
-console.log("[*] Iniciando Bypass de UnCrackable3...");
+/*
+ * UnCrackable Level 3 - Final Bypass Script
+ * Desarrollado para: Puesta en producción segura
+ */
 
-// Hook de hilos para bloquear anti-tampering en libfoo.so
-const pthread_create = Module.findGlobalExportByName(null, "pthread_create");
-const pthread_create_orig = new NativeFunction(pthread_create, 'int', ['pointer', 'pointer', 'pointer', 'pointer']);
+console.log("[*] UnCrackable3 final bypass activo");
 
-Interceptor.replace(pthread_create, new NativeCallback(function(thread, attr, routine, arg) {
-    const module = Process.findModuleByAddress(routine);
-    if (module && module.name.includes("libfoo.so")) {
-        console.log("[!] Bloqueando hilo de vigilancia en libfoo.so");
-        return 0; 
-    }
-    return pthread_create_orig(thread, attr, routine, arg);
-}, 'int', ['pointer', 'pointer', 'pointer', 'pointer']));
+function hookStrstr() {
+    const strstr = Module.findGlobalExportByName("strstr");
+    if (!strstr) return;
 
-// Bypass de detecciones strstr (Frida/Root)
-const strstr = Module.findGlobalExportByName(null, "strstr");
-Interceptor.attach(strstr, {
-    onEnter: function (args) {
-        const needle = args[1].readCString();
-        if (needle && (needle.includes("frida") || needle.includes("xposed") || needle.includes("su"))) {
-            this.found = true;
+    Interceptor.attach(strstr, {
+        onEnter: function (args) {
+            this.hide = false;
+            try {
+                const haystack = args[0].readCString();
+                const needle = args[1].readCString();
+                if (needle) {
+                    const n = needle.toLowerCase();
+                    if (n.indexOf("frida") !== -1 || n.indexOf("xposed") !== -1 || n.indexOf("su") !== -1) {
+                        this.hide = true;
+                    }
+                }
+            } catch (e) {}
+        },
+        onLeave: function (retval) {
+            if (this.hide) {
+                retval.replace(ptr(0));
+            }
         }
-    },
-    onLeave: function (retval) {
-        if (this.found) retval.replace(ptr(0));
-    }
-});
+    });
+    console.log("[+] Hook strstr activo (Antidetect)");
+}
+
+function hookPthreadCreate() {
+    const pthread_create = Module.findGlobalExportByName("pthread_create");
+    if (!pthread_create) return;
+
+    const pthread_create_orig = new NativeFunction(pthread_create, 'int', ['pointer', 'pointer', 'pointer', 'pointer']);
+
+    Interceptor.replace(pthread_create, new NativeCallback(function(thread, attr, start_routine, arg) {
+        let block = false;
+        let modName = "unknown";
+        try {
+            const module = Process.findModuleByAddress(start_routine);
+            if (module) {
+                modName = module.name;
+                // Bloqueamos hilos de libfoo para evitar el anti-tampering dinámico
+                if (modName.indexOf("libfoo") !== -1 || modName.indexOf("base.odex") !== -1) {
+                    block = true;
+                }
+            } else {
+                block = true;
+            }
+        } catch(e) {}
+
+        if (block) {
+            console.log("[!] Bloqueando hilo de vigilancia: " + modName);
+            return 0;
+        }
+
+        return pthread_create_orig(thread, attr, start_routine, arg);
+    }, 'int', ['pointer', 'pointer', 'pointer', 'pointer']));
+    
+    console.log("[+] Hook pthread_create activo (Anti-Tampering bypass)");
+}
+
+function hookStrncmp() {
+    const strncmp = Module.findGlobalExportByName("strncmp");
+    if (!strncmp) return;
+
+    Interceptor.attach(strncmp, {
+        onEnter: function (args) {
+            try {
+                const module = Process.findModuleByAddress(this.returnAddress);
+                if (module && module.name.indexOf("libfoo") !== -1) {
+                    const s1 = args[0].readCString();
+                    const s2 = args[1].readCString();
+                    if (s1 && s2) {
+                        console.log("[DEBUG] strncmp en libfoo: " + s1 + " vs " + s2);
+                    }
+                }
+            } catch (e) {}
+        }
+    });
+}
+
+// Aplicar hooks de nivel nativo inmediatamente
+hookStrstr();
+hookPthreadCreate();
+hookStrncmp();
 
 Java.perform(function () {
-    // Evitar cierre por deteccion
-    Java.use("java.lang.System").exit.implementation = function(code) {
-        console.log("[!] System.exit bloqueado");
+    console.log("[*] Aplicando hooks en capa Java...");
+
+    // Bypass de depuración
+    Java.use("android.os.Debug").isDebuggerConnected.implementation = function () {
+        return false;
     };
 
-    // Ocultar dialogos de error
-    Java.use("sg.vantagepoint.uncrackable3.MainActivity").showDialog.implementation = function(str) {
-        console.log("[+] Dialogo ocultado: " + str);
+    // Bloqueo de cierre de app
+    Java.use("java.lang.System").exit.implementation = function (code) {
+        console.log("[!] Intento de System.exit(" + code + ") bloqueado");
     };
 
-    // Bypass UI
-    Java.use("sg.vantagepoint.uncrackable3.CodeCheck").check_code.implementation = function(input) {
-        return true; 
-    };
+    // Ocultar avisos de Root
+    try {
+        Java.use("sg.vantagepoint.uncrackable3.MainActivity").showDialog.implementation = function (str) {
+            console.log("[+] Dialogo de seguridad anulado: " + str);
+        };
+    } catch (e) {}
+
+    // Bypass de validación visual
+    try {
+        Java.use("sg.vantagepoint.uncrackable3.CodeCheck").check_code.implementation = function (input) {
+            console.log("[*] Entrada de usuario interceptada: " + input);
+            return true;
+        };
+    } catch (e) {}
 });
+
+// Función para extraer el secreto directamente de la memoria usando XOR
+function extractSecret() {
+    try {
+        const libfoo = Process.getModuleByName("libfoo.so");
+        const xorkey = "pizzapizzapizzapizzapizz";
+        let found = false;
+        
+        const ranges = libfoo.enumerateRanges('r--').concat(libfoo.enumerateRanges('rw-'));
+        for (let r = 0; r < ranges.length; r++) {
+            const range = ranges[r];
+            const buffer = new Uint8Array(range.base.readByteArray(range.size));
+            for (let i = 0; i < range.size - 24; i++) {
+                let possibleFlag = "";
+                let isPrintable = true;
+                for (let j = 0; j < 24; j++) {
+                    const decrypted = buffer[i + j] ^ xorkey.charCodeAt(j);
+                    if (decrypted < 32 || decrypted > 126) {
+                        isPrintable = false;
+                        break;
+                    }
+                    possibleFlag += String.fromCharCode(decrypted);
+                }
+                if (isPrintable && possibleFlag.length === 24 && possibleFlag !== xorkey) {
+                    console.log("\n[!!!] ⭐ SECRET FLAG ENCONTRADA EN MEMORIA ⭐ [!!!]");
+                    console.log("[=>] " + possibleFlag + "\n");
+                    found = true;
+                }
+            }
+        }
+        if (!found) setTimeout(extractSecret, 3000);
+    } catch(e) {}
+}
+
+// Iniciar extracción tras la carga de la librería
+setTimeout(extractSecret, 4000);
 ```
 
 ---

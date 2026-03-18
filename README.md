@@ -26,6 +26,7 @@ Primero verificamos que el emulador sea visible via ADB:
 ```bash
 adb devices
 ```
+![Captura de adb devices](img/1_adb_devices.png)
 
 ### 1.2. Instalacion de Frida-Server
 Para poder inyectar codigo, necesitamos el servidor de Frida corriendo en el Android (con permisos de root):
@@ -39,12 +40,14 @@ adb shell chmod +x /data/local/tmp/frida-server
 # Ejecutamos el servidor en segundo plano
 adb shell "/data/local/tmp/frida-server &"
 ```
+![Captura de preparación de frida-server](img/2_frida_server.png)
 
 ### 1.3. Verificacion de Frida
 Comprobamos que Frida puede ver los procesos del movil:
 ```bash
 frida-ps -U
 ```
+![Captura de frida-ps](img/3_frida_ps.png)
 
 ---
 
@@ -59,11 +62,12 @@ Desopilamos el APK para buscar pistas en el codigo fuente.
 ---
 
 ## 3. Fase 2: Bypass de Seguridad Inicial (Java)
-Creamos un archivo llamado [bypass.js](file:///C:/Users/alvar/Desktop/jadx/bypass.js) con los hooks necesarios. Para lanzar la aplicacion ignorando las protecciones de Java, usamos el siguiente comando:
+Creamos un archivo llamado [bypass.js](bypass.js) con los hooks necesarios. Para lanzar la aplicacion ignorando las protecciones de Java, usamos el siguiente comando:
 
 ```bash
 frida -U -f owasp.mstg.uncrackable3 -l bypass.js
 ```
+![Captura de la ejecución de Frida](img/4_frida_bypass.png)
 
 **Codigo Java Hooked**:
 *   Interceptamos `System.exit()` para evitar cierres.
@@ -74,7 +78,7 @@ frida -U -f owasp.mstg.uncrackable3 -l bypass.js
 ## 4. Fase 4: El Hueso Duro (Anti-Tampering)
 La libreria `libfoo.so` tiene protecciones avanzadas. Si detecta a Frida, crashea. Para evitarlo, bloqueamos la creacion de hilos de vigilancia.
 
-**Instrucción**: El script [bypass.js](file:///C:/Users/alvar/Desktop/jadx/bypass.js) debe incluir el hook de `pthread_create` para detectar cuando `libfoo.so` intenta lanzar un hilo y devolver `0` (exito) sin ejecutarlo realmente.
+**Instrucción**: El script [bypass.js](bypass.js) debe incluir el hook de `pthread_create` para detectar cuando `libfoo.so` intenta lanzar un hilo y devolver `0` (exito) sin ejecutarlo realmente.
 
 ---
 
@@ -90,14 +94,17 @@ adb shell pm path owasp.mstg.uncrackable3
 # Descargar el APK (sustituye [ruta] por la salida del comando anterior)
 adb pull /data/app/.../base.apk uncrackable3.apk
 ```
+![Captura de extracción del APK](img/5_adb_pull_apk.png)
 
 ### 5.2. Ejecutar el Brute-Force XOR
-He creado un script de Python ([brute_libfoo.py](file:///c:/Users/alvar/Desktop/jadx/brute_libfoo.py)) que abre el APK, extrae `libfoo.so` y busca secuencias de 24 bytes que al hacerles XOR con "pizza" den un resultado legible.
+He creado un script de Python ([brute_libfoo.py](brute_libfoo.py)) que abre el APK y extrae la librería `libfoo.so`. 
+En lugar de usar la clave original `"pizzapizzapizzapizzapizz"`, este script utiliza una matriz de bytes exacta porque la librería nativa `libfoo.so` **muta la clave en memoria en tiempo de ejecución**. Buscamos secuencias que, al aplicarles XOR con esta nueva clave mutada, den el resultado legible de la flag.
 
 **Comando**:
 ```bash
 python brute_libfoo.py
 ```
+![Captura de la ejecución del script brute-force](img/6_python_bruteforce.png)
 
 **Resultado obtenido**:
 Al ejecutarlo, el script nos devuelve:
@@ -106,7 +113,7 @@ Al ejecutarlo, el script nos devuelve:
 ---
 
 ## Anexo: Script de Bypass Final (Frida)
-Este es el archivo [bypass.js](file:///C:/Users/alvar/Desktop/jadx/bypass.js) completo que permite que la app funcione y nos permite realizar las pruebas.
+Este es el archivo [bypass.js](bypass.js) completo que permite que la app funcione y nos permite realizar las pruebas.
 
 ```javascript
 console.log("[*] Iniciando Bypass de UnCrackable3...");

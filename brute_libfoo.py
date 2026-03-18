@@ -2,7 +2,8 @@ import zipfile
 import re
 
 apk_path = "uncrackable3.apk"
-key = b"pizzapizzapizzapizzapizz"
+# Clave mutada en memoria por libfoo.so
+key = bytes([112, 105, 122, 122, 97, 112, 105, 122, 122, 97, 112, 105, 122, 122, 97, 112, 78, 4, 82, 14, 4, 78, 26, 11])
 
 print("[+] Abriendo " + apk_path)
 with zipfile.ZipFile(apk_path, "r") as z:
@@ -20,7 +21,7 @@ with zipfile.ZipFile(apk_path, "r") as z:
     print(f"[+] Extrayendo {target_lib}")
     data = z.read(target_lib)
 
-print(f"[+] Tamaño de libfoo.so: {len(data)} bytes. Buscando flag (key={key.decode()})...")
+print(f"[+] Tamaño de libfoo.so: {len(data)} bytes. Buscando flag en binario...")
 
 found = []
 for i in range(len(data) - 24):
@@ -35,7 +36,7 @@ for i in range(len(data) - 24):
     # Check if printable ASCII
     if all(32 <= c <= 126 for c in decrypted):
         try:
-            s = decrypted.decode('ascii')
+            s = decrypted.decode('ascii', errors='ignore')
             # Extra filter
             if 'making' in s.lower() or 'owasp' in s.lower():
                 found.append((i, s))
@@ -44,4 +45,4 @@ for i in range(len(data) - 24):
 
 print(f"\n[+] Encontrados {len(found)} candidatos plausibles:")
 for offset, s in found:
-    print(f"Offset 0x{offset:x}: {s}")
+    print(f"Offset 0x{offset:x}: {repr(s)}")

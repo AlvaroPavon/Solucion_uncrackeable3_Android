@@ -169,6 +169,8 @@ Java.perform(function () {
 Siguiendo estos pasos, hemos conseguido:
 1.  Burlar todas las protecciones de entorno y anti-instrumentacion.
 2.  Extraer el binario nativo.
-3.  Descifrar el secreto mediante un ataque de fuerza bruta XOR basado en la clave encontrada en el codigo Java.
+3.  Descifrar el secreto mediante un ataque de fuerza bruta XOR basado en la clave mutada en memoria.
 
-El secreto final es: **`making owasp great again`**.
+El secreto final introducido y verificado exitosamente es: **`making owasp great again`**.
+
+![Captura de la solución final en Android](img/7_android_solution.png)
